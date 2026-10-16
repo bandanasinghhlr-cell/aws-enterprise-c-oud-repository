@@ -1,1 +1,11 @@
 .gitignore
+.git
+.github
+.venv
+venv
+__pycache__
+.pytest_cache
+.env
+*.pyc
+*.tfstate
+*.tfstate.*
