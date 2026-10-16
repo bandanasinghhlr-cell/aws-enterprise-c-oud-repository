@@ -1,5 +1,5 @@
 
-name: Application CI and AWS OIDC
+name: Application CI and ECR Delivery
 
 on:
   push:
@@ -29,18 +29,61 @@ jobs:
       - name: Run automated tests
         run: python -m pytest -q
 
-  aws-oidc-test:
+  build-scan-push:
+    needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
+
+    env:
+      AWS_REGION: us-east-2
+      ECR_REPOSITORY: hospitality-booking-api
+
     steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t hospitality-booking-api:${GITHUB_SHA} .
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: hospitality-booking-api:${{ github.sha }}
+          format: table
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
       - name: Configure AWS credentials using OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::218619602308:role/GitHubActionsDeployRole
-          aws-region: ap-south-1
+          aws-region: us-east-2
 
       - name: Verify AWS identity
         run: aws sts get-caller-identity
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Tag image for ECR
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker tag \
+            hospitality-booking-api:${GITHUB_SHA} \
+            ${REGISTRY}/${ECR_REPOSITORY}:${GITHUB_SHA}
+
+      - name: Push image to ECR
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker push \
+            ${REGISTRY}/${ECR_REPOSITORY}:${GITHUB_SHA}
